@@ -1,0 +1,11 @@
+{
+    "java.project.sourcePaths": ["src"],
+    "java.project.outputPath": "bin",
+    "java.project.referencedLibraries": [
+        "lib/**/*.jar",
+        "c:\\Users\\nitin.be.sharma\\Downloads\\okhttp-3.3.0.jar",
+        "c:\\Users\\nitin.be.sharma\\Downloads\\unirest-java-1.4.7-sources.jar",
+        "c:\\Users\\nitin.be.sharma\\Downloads\\jar_files\\json-20140107.jar",
+        "c:\\Users\\nitin.be.sharma\\Downloads\\gson-2.8.5-javadoc.jar"
+    ]
+}
