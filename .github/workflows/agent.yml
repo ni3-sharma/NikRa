@@ -13,15 +13,18 @@ jobs:
     if: startsWith(github.event.comment.body, '[agent-ni3]')
     runs-on: ubuntu-latest
 
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
     steps:
-      # 1️⃣ Checkout repository
+      # 1️⃣ Checkout main branch
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      # 2️⃣ Setup Node.js (needed for OpenAI SDK)
+      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -29,10 +32,10 @@ jobs:
 
       # 3️⃣ Install dependencies
       - name: Install OpenAI SDK
-        run: npm install openai fs-extra
+        run: npm install openai fs-extra path
 
       # 4️⃣ Parse issue comment
-      - name: Parse Comment
+      - name: Parse issue comment
         id: parse
         run: |
           COMMENT="${{ github.event.comment.body }}"
@@ -70,6 +73,7 @@ jobs:
         run: |
           node -e "
           import fs from 'fs-extra';
+          import path from 'path';
           import OpenAI from 'openai';
 
           const prompt = process.env.PROMPT;
@@ -80,12 +84,11 @@ jobs:
           async function run() {
             const completion = await client.chat.completions.create({
               model: 'gpt-4',
-              messages: [{ role: 'user', content: 'Generate Java files with path info for a project. Prompt: ' + prompt }],
+              messages: [{ role: 'user', content: 'Generate Java files with full path info for a project. Prompt: ' + prompt }],
               temperature: 0.2
             });
 
             const output = completion.choices[0].message.content;
-
             fs.writeFileSync('agent_output.txt', output);
 
             // Parse multi-file output: expects format like
@@ -100,14 +103,14 @@ jobs:
               const contentIndex = lines.findIndex(l => l.startsWith('content: |'));
               if (contentIndex === -1) continue;
               const content = lines.slice(contentIndex + 1).join('\n');
-              fs.ensureDirSync(require('path').dirname(filePath));
+              fs.ensureDirSync(path.dirname(filePath));
               fs.writeFileSync(filePath, content);
             }
           }
 
-          run().catch(e => {
-            console.error('❌ GPT generation failed:', e);
-            process.exit(1);
+          run().catch(e => { 
+            console.error('❌ GPT generation failed:', e); 
+            process.exit(1); 
           });
           "
 
