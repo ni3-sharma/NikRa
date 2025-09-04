@@ -1,4 +1,4 @@
-name: Agent NI3 Copilot
+name: Agent NI3 Copilot Bot
 
 on:
   issue_comment:
@@ -13,23 +13,35 @@ jobs:
     if: startsWith(github.event.comment.body, '[agent-ni3]')
     runs-on: ubuntu-latest
 
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
-      - name: Checkout repo
+      # 1️⃣ Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # 2️⃣ Setup Node.js (needed for Copilot CLI runtime)
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "20"
+          node-version: '20'
 
+      # 3️⃣ Download and install Copilot CLI binary
       - name: Install Copilot CLI
-        run: npm install -g @github/copilot-cli
+        run: |
+          curl -Lo copilot https://github.com/github/copilot-cli/releases/latest/download/copilot-linux-amd64
+          chmod +x copilot
+          sudo mv copilot /usr/local/bin/copilot
+          copilot --version
 
+      # 4️⃣ Authenticate Copilot CLI
       - name: Authenticate Copilot CLI
         run: copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }}
 
+      # 5️⃣ Parse issue comment
       - name: Parse issue comment
         id: parse
         run: |
@@ -54,6 +66,7 @@ jobs:
 
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
+      # 6️⃣ Post in-progress comment
       - name: Post in-progress comment
         run: |
           curl -s -X POST \
@@ -62,11 +75,14 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"⏳ Agent NI3 is generating Java code using GitHub Copilot..."}'
 
-      - name: Generate Java code with Copilot
+      # 7️⃣ Generate Java code with Copilot CLI
+      - name: Generate Java code
         run: |
           mkdir -p agent_output
-          copilot generate --language java --prompt "$PROMPT" --output agent_output/
+          copilot generate --language java --prompt "$PROMPT" --output agent_output/ || \
+          (echo "❌ Copilot generation failed" && exit 1)
 
+      # 8️⃣ Commit generated code
       - name: Commit generated code
         run: |
           git config user.name "Agent NI3 Bot"
@@ -75,6 +91,7 @@ jobs:
           git diff-index --quiet HEAD || git commit -m "Agent NI3 Copilot-generated Java files"
           git push origin main || echo "⚠️ Push failed; maybe no changes"
 
+      # 9️⃣ Post preview in issue
       - name: Post preview
         run: |
           AI_PREVIEW=$(head -n 50 agent_output/* || echo "No output generated")
@@ -82,4 +99,4 @@ jobs:
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "✅ Agent NI3 applied Copilot-generated Java files on main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
+            -d '{"body": "✅ Agent NI3 applied Copilot-generated Java files on the main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
