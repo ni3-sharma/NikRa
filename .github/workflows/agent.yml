@@ -11,21 +11,19 @@ permissions:
 
 jobs:
   agent-job:
-    if: startsWith(github.event.comment.body, '[agent-ni3]') || contains(github.event.comment.body, 'create PR')
+    if: startsWith(github.event.comment.body, '[agent-ni3]') || startsWith(github.event.comment.body, 'branch:') || contains(github.event.comment.body, 'create PR')
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repo (fetch full history)
+      # 1. Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # fetch full history
+          fetch-depth: 0
 
-      # 2. Fetch all remote branches (branch-fetch fix)
+      # 2. Fetch all remote branches
       - name: Fetch all branches
-        run: |
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
-          git branch -r
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*'
 
       # 3. Authenticate as GitHub App
       - name: Authenticate as GitHub App
@@ -36,64 +34,61 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      # 4. Parse Prompt & Branch (robust)
-      - name: Parse Prompt & Branch
+      # 4. Parse comment, branch, and action
+      - name: Parse Comment
         id: parse
         run: |
           COMMENT="${{ github.event.comment.body }}"
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+
+          CREATE_PR="no"
           if [[ "$COMMENT" == create\ PR* ]]; then
-            echo "CREATE_PR=yes" >> $GITHUB_ENV
-          else
-            echo "CREATE_PR=no" >> $GITHUB_ENV
+            CREATE_PR="yes"
+          fi
+          echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
+
+          # Detect branch in any comment
+          if [[ "$COMMENT" =~ branch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
+            BASE_BRANCH="${BASH_REMATCH[1]}"
+            echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
           fi
 
+          # Detect AI prompt only from agent-ni3 comment
           if [[ "$COMMENT" == [agent-ni3]* ]]; then
             PROMPT="${COMMENT#"[agent-ni3]"}"
             echo "PROMPT=$PROMPT" >> $GITHUB_ENV
-
-            # Robust branch extraction
-            if [[ "$PROMPT" =~ branch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
-              BASE_BRANCH="${BASH_REMATCH[1]}"
-              echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
-            else
-              curl -s -X POST \
-                -H "Authorization: token ${{ steps.auth.outputs.token }}" \
-                -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-                -d '{"body": "⚠️ No valid branch specified. Please reply with `branch:<branch-name>`."}'
-              echo "NO_BRANCH_SPECIFIED=true" >> $GITHUB_ENV
-            fi
           fi
 
-      # 5. Post "in progress" comment
-      - name: Post In-Progress Comment
-        if: env.CREATE_PR == 'no' && env.NO_BRANCH_SPECIFIED != 'true'
+      # 5. Ask for branch if missing (async)
+      - name: Request branch if missing
+        if: env.BASE_BRANCH == ''
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ steps.auth.outputs.token }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "⏳ Agent NI3 is processing your prompt on branch '"${BASE_BRANCH}"'..."}'
+            -d '{"body":"⚠️ No branch specified. Please reply to this issue with `branch:<branch-name>` to continue."}'
+          echo "EXIT_NO_BRANCH=true" >> $GITHUB_ENV
+          exit 0
 
-      # 6. Apply AI-assisted changes
+      # 6. Post in-progress comment
+      - name: Post in-progress comment
+        if: env.EXIT_NO_BRANCH != 'true' && env.CREATE_PR == 'no'
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body":"⏳ Agent NI3 is processing your prompt on branch '"${BASE_BRANCH}"'..."}'
+
+      # 7. Apply AI-assisted code changes (multi-file, fault-tolerant)
       - name: Apply AI-assisted changes
-        if: env.CREATE_PR == 'no' && env.NO_BRANCH_SPECIFIED != 'true'
+        if: env.EXIT_NO_BRANCH != 'true' && env.CREATE_PR == 'no'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-
-          # Fault-tolerant base branch check
-          if ! git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
-            curl -s -X POST \
-              -H "Authorization: token ${{ steps.auth.outputs.token }}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-              -d '{"body": "⚠️ Base branch '"$BASE_BRANCH"' does not exist. Please provide a valid branch."}'
-            exit 0
-          fi
-
           TEMP_BRANCH="agent-ni3-fix-$(date +%s)"
           git checkout -b $TEMP_BRANCH origin/$BASE_BRANCH
 
@@ -101,13 +96,12 @@ jobs:
           git config user.email "agent-ni3-bot@github.com"
 
           # AI Code Generation
-          PROMPT="${{ env.PROMPT }}"
           AI_OUTPUT=$(curl -s https://api.openai.com/v1/completions \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
             -d '{
               "model": "text-davinci-003",
-              "prompt": "Generate code/files for the following instruction in the NikRa repo: '"$PROMPT"'. Output format: file path followed by content using content: | syntax.",
+              "prompt": "Generate code/files for the following instruction in the NikRa repo: '"${PROMPT}"'. Output format: file path followed by content using content: | syntax.",
               "max_tokens": 2000
             }' | jq -r '.choices[0].text')
 
@@ -125,18 +119,16 @@ jobs:
             }
           ' agent_ai_output.txt || echo "⚠️ Warning: Some AI output could not be parsed; check agent_ai_output.txt"
 
-          # Commit & Push
           git add .
           git commit -m "Agent NI3 AI-generated files" || echo "No changes to commit"
           git push https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }} $TEMP_BRANCH || echo "⚠️ Push failed"
 
           echo "TEMP_BRANCH=$TEMP_BRANCH" >> $GITHUB_ENV
-          echo "CHANGES_MADE=Yes" >> $GITHUB_ENV
           echo "AI_OUTPUT=$AI_OUTPUT" >> $GITHUB_ENV
 
-      # 7. Post AI result comment
-      - name: Post AI result comment
-        if: env.CREATE_PR == 'no' && env.CHANGES_MADE == 'Yes'
+      # 8. Post AI result comment
+      - name: Post AI result
+        if: env.EXIT_NO_BRANCH != 'true' && env.CREATE_PR == 'no'
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ steps.auth.outputs.token }}" \
@@ -144,43 +136,39 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body": "✅ Agent NI3 applied AI-generated files on branch '"${TEMP_BRANCH}"'.\n\nPreview:\n'"${{ env.AI_OUTPUT }}"'\n\nReply `create PR` to open a Pull Request."}'
 
-      # 8. Create PR
+      # 9. Create PR & assign reviewers
       - name: Create PR
         if: env.CREATE_PR == 'yes'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEMP_BRANCH=$(git branch -r | grep agent-ni3-fix | tail -1 | sed 's/origin\///')
-          PR_TITLE="Agent NI3 AI: Automated changes"
-          PR_BODY="AI-generated PR by Agent NI3 bot based on user prompt."
-
           PR_NUMBER=$(curl -s -X POST \
-            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/pulls \
-            -d '{"title":"'"$PR_TITLE"'","head":"'"$TEMP_BRANCH"'","base":"'"${BASE_BRANCH}"'","body":"'"$PR_BODY"'"}' | jq -r '.number')
+            -d '{"title":"Agent NI3 AI: Automated changes","head":"'"$TEMP_BRANCH"'","base":"'"$BASE_BRANCH"'","body":"AI-generated PR by Agent NI3 bot."}' | jq -r '.number')
 
           # Assign reviewers
           curl -s -X POST \
-            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers \
             -d '{"reviewers":["ni3-sharma"]}'
 
-          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
-
           # Notify PR creation
           curl -s -X POST \
-            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"✅ PR #'"$PR_NUMBER"' created with AI-generated files from branch '"$TEMP_BRANCH"'."}'
 
-      # 9. PR safeguard for critical files
+      # 10. PR safeguard for critical files
       - name: Check critical files in PR
         if: env.CREATE_PR == 'yes'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
           CRITICAL_FILES=("src/config/" "src/Helper/Important.java")
           CHANGED_FILES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -205,5 +193,3 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               https://api.github.com/repos/${{ github.repository }}/issues/${{ env.PR_NUMBER }}/comments \
               -d '{"body":"'"$WARNING_MSG"'"}'
-          else
-            echo "✅ No critical files overwritten or deleted."
