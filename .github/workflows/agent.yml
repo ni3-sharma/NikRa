@@ -21,6 +21,11 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+
       # 2️⃣ Install GitHub Copilot CLI
       - name: Install Copilot CLI
         run: npm install -g @githubnext/github-copilot-cli
