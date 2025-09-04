@@ -27,17 +27,17 @@ jobs:
         with:
           node-version: "20"
 
-      # 3️⃣ Install GitHub Copilot CLI
+      # 3️⃣ Install Copilot CLI locally
       - name: Install Copilot CLI
-        run: npm install -g @githubnext/github-copilot-cli
+        run: npm install @githubnext/github-copilot-cli
 
-      # 4️⃣ Verify Copilot CLI
+      # 4️⃣ Verify Copilot CLI using npx
       - name: Verify Copilot CLI
-        run: copilot --version
+        run: npx copilot --version
 
       # 5️⃣ Authenticate Copilot CLI
       - name: Authenticate Copilot CLI
-        run: copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }}
+        run: npx copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }}
 
       # 6️⃣ Parse issue comment for prompt
       - name: Parse Comment
@@ -73,11 +73,11 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"⏳ Agent NI3 is processing your Java prompt on the main branch..."}'
 
-      # 8️⃣ Generate Java code using Copilot CLI
+      # 8️⃣ Generate Java code using Copilot CLI via npx
       - name: Generate Java code with Copilot
         run: |
           PROMPT="${{ env.PROMPT }}"
-          copilot generate --language java --prompt "$PROMPT" > agent_output.txt
+          npx copilot generate --language java --prompt "$PROMPT" > agent_output.txt
           cat agent_output.txt
 
       # 9️⃣ Parse multi-file AI output and create files
