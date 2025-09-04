@@ -1,28 +1,114 @@
-- name: Parse Comment (robust)
-  id: parse
-  run: |
-    COMMENT="${{ github.event.comment.body }}"
-    ISSUE_NUMBER="${{ github.event.issue.number }}"
+name: Agent NI3 AI Bot (Main Branch)
 
-    CREATE_PR="no"
-    if [[ "$COMMENT" =~ [Cc]reate[[:space:]]PR ]]; then
-        CREATE_PR="yes"
-    fi
-    echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
+on:
+  issue_comment:
+    types: [created]
 
-    # Robustly extract [agent-ni3] content
-    if [[ "$COMMENT" =~ \[agent-ni3\](.*) ]]; then
-        PROMPT="${BASH_REMATCH[1]}"
-        PROMPT=$(echo "$PROMPT" | sed 's/^[[:space:]\n]*//;s/[[:space:]\n]*$//')  # trim spaces & newlines
-    else
-        PROMPT=""
-    fi
-    echo "PROMPT=$PROMPT" >> $GITHUB_ENV
+permissions:
+  issues: write
+  contents: write
 
-    # Detect branch anywhere in the comment (branch:xxx)
-    if [[ "$COMMENT" =~ [Bb]ranch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
-        BASE_BRANCH="${BASH_REMATCH[1]}"
-    else
-        BASE_BRANCH=""
-    fi
-    echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
+jobs:
+  agent-main:
+    if: startsWith(github.event.comment.body, '[agent-ni3]')
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout the main branch
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # 2. Authenticate GitHub App (if needed)
+      - name: Authenticate GitHub App
+        id: auth
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.PRIVATE_KEY }}
+          installation_id: ${{ secrets.INSTALLATION_ID }}
+
+      # 3. Parse the comment
+      - name: Parse Comment
+        id: parse
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+
+          # Extract everything after [agent-ni3] as the prompt
+          if [[ "$COMMENT" =~ \[agent-ni3\](.*) ]]; then
+              PROMPT="${BASH_REMATCH[1]}"
+              PROMPT=$(echo "$PROMPT" | sed 's/^[[:space:]\n]*//;s/[[:space:]\n]*$//')  # trim spaces
+          else
+              PROMPT=""
+          fi
+
+          if [ -z "$PROMPT" ]; then
+              curl -s -X POST \
+                -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+                -H "Accept: application/vnd.github+json" \
+                https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+                -d '{"body":"❌ No valid prompt detected. Please start your comment with `[agent-ni3]` followed by instructions."}'
+              exit 1
+          fi
+
+          echo "PROMPT=$PROMPT" >> $GITHUB_ENV
+
+      # 4. Post in-progress comment
+      - name: Post in-progress comment
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body":"⏳ Agent NI3 is processing your prompt on the main branch..."}'
+
+      # 5. Generate AI output
+      - name: AI Code Generation
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -e
+          # Call OpenAI API
+          AI_OUTPUT=$(curl -s https://api.openai.com/v1/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d '{
+              "model": "text-davinci-003",
+              "prompt": "'"$PROMPT"'",
+              "max_tokens": 2000,
+              "temperature": 0
+            }' | jq -r '.choices[0].text // "⚠️ AI returned empty output"')
+
+          echo "$AI_OUTPUT" > agent_ai_output.txt
+          echo "AI_OUTPUT=$AI_OUTPUT" >> $GITHUB_ENV
+
+          # Parse AI output and create files dynamically
+          awk '
+            /^file:/ { file=$2; next }
+            /^content: \|/ { content=""; in_content=1; next }
+            { if(in_content) { content=content $0 "\n" } }
+            /^$/ { if(file != "") { 
+                      system("mkdir -p \"$(dirname \""file"\")\" && echo \"" content "\" > \""file"\"") 
+                      file=""; in_content=0 
+                    } 
+            }
+          ' agent_ai_output.txt || echo "⚠️ Warning: Some AI output could not be parsed; check agent_ai_output.txt"
+
+          # Commit and push changes directly to main branch
+          git config user.name "Agent NI3 Bot"
+          git config user.email "agent-ni3-bot@github.com"
+          git add .
+          git commit -m "Agent NI3 AI-generated files" || echo "No changes to commit"
+          git push origin main || echo "⚠️ Push failed"
+
+      # 6. Post AI result
+      - name: Post AI result
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body": "✅ Agent NI3 applied AI-generated files on the main branch.\n\nPreview:\n'"${{ env.AI_OUTPUT }}"'"}'
