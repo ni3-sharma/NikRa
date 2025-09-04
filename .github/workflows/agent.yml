@@ -129,4 +129,74 @@ jobs:
 
       # 6. Post AI result comment
       - name: Post AI result comment
-        if: env.CREATE_PR == 'no'_
+        if: env.CREATE_PR == 'no' && env.CHANGES_MADE == 'Yes'
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body": "✅ Agent NI3 applied AI-generated files on branch '"${TEMP_BRANCH}"'.\n\nPreview:\n'"${{ env.AI_OUTPUT }}"'\n\nReply `create PR` to open a Pull Request."}'
+
+      # 7. Create PR
+      - name: Create PR
+        if: env.CREATE_PR == 'yes'
+        run: |
+          TEMP_BRANCH=$(git branch -r | grep agent-ni3-fix | tail -1 | sed 's/origin\///')
+          PR_TITLE="Agent NI3 AI: Automated changes"
+          PR_BODY="AI-generated PR by Agent NI3 bot based on user prompt."
+
+          PR_NUMBER=$(curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls \
+            -d '{"title":"'"$PR_TITLE"'","head":"'"$TEMP_BRANCH"'","base":"main","body":"'"$PR_BODY"'"}' | jq -r '.number')
+
+          # Assign reviewers
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers \
+            -d '{"reviewers":["ni3-sharma"]}'
+
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+
+          # Notify PR creation
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body":"✅ PR #'"$PR_NUMBER"' created with AI-generated files from branch '"$TEMP_BRANCH"'."}'
+
+      # 8. PR safeguard for critical files
+      - name: Check critical files in PR
+        if: env.CREATE_PR == 'yes'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          CRITICAL_FILES=("src/config/" "src/Helper/Important.java")
+          CHANGED_FILES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/${{ env.PR_NUMBER }}/files \
+            | jq -r '.[].filename')
+
+          WARNING_MSG="⚠️ Warning: The following critical files/folders are modified or deleted in this PR:\n"
+          ISSUE_WARNING=0
+
+          for file in $CHANGED_FILES; do
+            for critical in "${CRITICAL_FILES[@]}"; do
+              if [[ "$file" == $critical* ]]; then
+                WARNING_MSG+="- $file\n"
+                ISSUE_WARNING=1
+              fi
+            done
+          done
+
+          if [ $ISSUE_WARNING -eq 1 ]; then
+            curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${{ github.repository }}/issues/${{ env.PR_NUMBER }}/comments \
+              -d '{"body":"'"$WARNING_MSG"'"}'
+          else
+            echo "✅ No critical files overwritten or deleted."
