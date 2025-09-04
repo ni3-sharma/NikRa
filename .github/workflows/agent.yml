@@ -1,12 +1,14 @@
-name: agent-ni3
+name: Agent NI3 Bot
 
 on:
-  pull_request:
-    types: [opened]
+  issue_comment:
+    types: [created]
 
 jobs:
-  run-agent:
+  agent-job:
+    if: startsWith(github.event.comment.body, '[agent-ni3]')
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -19,10 +21,17 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      - name: Comment on PR
+      - name: Extract Prompt
+        id: extract
+        run: |
+          PROMPT="${{ github.event.comment.body }}"
+          PROMPT="${PROMPT#'[agent-ni3]'}"
+          echo "PROMPT=$PROMPT" >> $GITHUB_ENV
+
+      - name: Reply to Comment
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ steps.auth.outputs.token }}" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-            -d '{"body":"👋 Hi! I am your custom GitHub Agent App. Thanks for opening this PR!"}'
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body": "⚡ Agent NI3 received your request: '${{ env.PROMPT }}'"}'
