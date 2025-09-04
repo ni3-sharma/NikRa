@@ -1,4 +1,4 @@
-name: Agent NI3 AI Bot (Main Branch)
+name: Agent NI3 AI Bot
 
 on:
   issue_comment:
@@ -14,14 +14,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the main branch
-      - name: Checkout main branch
+      # 1. Checkout main branch
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      # 2. Authenticate GitHub App (if needed)
+      # 2. Authenticate GitHub App
       - name: Authenticate GitHub App
         id: auth
         uses: tibdex/github-app-token@v2
@@ -30,17 +30,17 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      # 3. Parse the comment
+      # 3. Parse comment
       - name: Parse Comment
         id: parse
         run: |
           COMMENT="${{ github.event.comment.body }}"
           ISSUE_NUMBER="${{ github.event.issue.number }}"
 
-          # Extract everything after [agent-ni3] as the prompt
+          # Robustly capture everything after [agent-ni3]
           if [[ "$COMMENT" =~ \[agent-ni3\](.*) ]]; then
               PROMPT="${BASH_REMATCH[1]}"
-              PROMPT=$(echo "$PROMPT" | sed 's/^[[:space:]\n]*//;s/[[:space:]\n]*$//')  # trim spaces
+              PROMPT=$(echo "$PROMPT" | sed 's/^[[:space:]\n]*//;s/[[:space:]\n]*$//')
           else
               PROMPT=""
           fi
@@ -65,19 +65,23 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"⏳ Agent NI3 is processing your prompt on the main branch..."}'
 
-      # 5. Generate AI output
+      # 5. AI Code Generation
       - name: AI Code Generation
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -e
+
+          # Safe JSON escaping for prompt
+          PROMPT_JSON=$(jq -Rn --arg p "$PROMPT" '$p')
+
           # Call OpenAI API
           AI_OUTPUT=$(curl -s https://api.openai.com/v1/completions \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
             -d '{
               "model": "text-davinci-003",
-              "prompt": "'"$PROMPT"'",
+              "prompt": '"$PROMPT_JSON"',
               "max_tokens": 2000,
               "temperature": 0
             }' | jq -r '.choices[0].text // "⚠️ AI returned empty output"')
@@ -85,7 +89,7 @@ jobs:
           echo "$AI_OUTPUT" > agent_ai_output.txt
           echo "AI_OUTPUT=$AI_OUTPUT" >> $GITHUB_ENV
 
-          # Parse AI output and create files dynamically
+          # Multi-file parsing: file:<filename> content:| <content>
           awk '
             /^file:/ { file=$2; next }
             /^content: \|/ { content=""; in_content=1; next }
@@ -95,9 +99,9 @@ jobs:
                       file=""; in_content=0 
                     } 
             }
-          ' agent_ai_output.txt || echo "⚠️ Warning: Some AI output could not be parsed; check agent_ai_output.txt"
+          ' agent_ai_output.txt || echo "⚠️ Some AI output could not be parsed; check agent_ai_output.txt"
 
-          # Commit and push changes directly to main branch
+          # Commit changes to main
           git config user.name "Agent NI3 Bot"
           git config user.email "agent-ni3-bot@github.com"
           git add .
