@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   agent-job:
-    if: startsWith(github.event.comment.body, '[agent-ni3]') || startsWith(github.event.comment.body, 'branch:') || contains(github.event.comment.body, 'create PR')
+    if: startsWith(github.event.comment.body, '[agent-ni3]') || contains(github.event.comment.body, 'branch:') || contains(github.event.comment.body, 'create PR')
     runs-on: ubuntu-latest
 
     steps:
@@ -21,13 +21,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 2. Fetch all remote branches
+      # 2. Fetch all branches robustly
       - name: Fetch all branches
         run: |
           git fetch --all
           git fetch origin '+refs/heads/*:refs/remotes/origin/*'
 
-      # 3. Authenticate as GitHub App
+      # 3. Authenticate GitHub App
       - name: Authenticate as GitHub App
         id: auth
         uses: tibdex/github-app-token@v2
@@ -36,7 +36,7 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      # 4. Parse comment, branch, and action
+      # 4. Parse comment
       - name: Parse Comment
         id: parse
         run: |
@@ -44,8 +44,8 @@ jobs:
           ISSUE_NUMBER="${{ github.event.issue.number }}"
 
           CREATE_PR="no"
-          if [[ "$COMMENT" == create\ PR* ]]; then
-            CREATE_PR="yes"
+          if [[ "$COMMENT" =~ [Cc]reate[[:space:]]PR ]]; then
+              CREATE_PR="yes"
           fi
           echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
 
@@ -57,7 +57,7 @@ jobs:
           fi
           echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
 
-          # Detect AI prompt
+          # AI prompt detection
           if [[ "$COMMENT" == [agent-ni3]* ]]; then
               PROMPT="${COMMENT#"[agent-ni3]"}"
               echo "PROMPT=$PROMPT" >> $GITHUB_ENV
@@ -80,13 +80,12 @@ jobs:
           # Check if base branch exists remotely
           if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
               echo "✅ Base branch exists: $BASE_BRANCH"
+              git checkout $BASE_BRANCH
           else
               echo "⚠️ Base branch '$BASE_BRANCH' does not exist. Creating it from $DEFAULT_BRANCH..."
               git checkout -b $BASE_BRANCH $DEFAULT_BRANCH
               git push https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }} $BASE_BRANCH
           fi
-
-          git checkout $BASE_BRANCH
 
       # 6. Post in-progress comment
       - name: Post in-progress comment
@@ -98,7 +97,7 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"⏳ Agent NI3 is processing your prompt on branch '"${BASE_BRANCH}"'..."}'
 
-      # 7. Create temp branch and AI-assisted changes
+      # 7. Apply AI-assisted changes
       - name: Apply AI-assisted changes
         if: env.CREATE_PR == 'no'
         env:
