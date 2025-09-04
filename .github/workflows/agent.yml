@@ -1,12 +1,12 @@
-name: Agent NI3 Copilot Bot
+name: Agent NI3 Java Copilot Bot
 
 on:
   issue_comment:
     types: [created]
 
 permissions:
-  issues: write
   contents: write
+  issues: write
 
 jobs:
   agent-ni3:
@@ -15,26 +15,31 @@ jobs:
 
     steps:
       # 1️⃣ Checkout main branch
-      - name: Checkout main
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
+      # 2️⃣ Setup Node.js (needed for Copilot CLI)
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: "20"
 
-      # 2️⃣ Install GitHub Copilot CLI
+      # 3️⃣ Install GitHub Copilot CLI
       - name: Install Copilot CLI
         run: npm install -g @githubnext/github-copilot-cli
 
-      # 3️⃣ Authenticate Copilot CLI
+      # 4️⃣ Verify Copilot CLI
+      - name: Verify Copilot CLI
+        run: copilot --version
+
+      # 5️⃣ Authenticate Copilot CLI
       - name: Authenticate Copilot CLI
         run: copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }}
 
-      # 4️⃣ Parse issue comment for prompt
+      # 6️⃣ Parse issue comment for prompt
       - name: Parse Comment
         id: parse
         run: |
@@ -52,30 +57,30 @@ jobs:
               curl -s -X POST \
                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+                https://api.github.com/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments \
                 -d '{"body":"❌ No valid prompt detected. Please start your comment with `[agent-ni3]` followed by instructions."}'
               exit 1
           fi
 
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
-      # 5️⃣ Post in-progress comment
+      # 7️⃣ Post in-progress comment
       - name: Post in-progress comment
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body":"⏳ Agent NI3 is processing your prompt on the main branch..."}'
+            -d '{"body":"⏳ Agent NI3 is processing your Java prompt on the main branch..."}'
 
-      # 6️⃣ Generate code using Copilot
-      - name: Copilot Generate Code
+      # 8️⃣ Generate Java code using Copilot CLI
+      - name: Generate Java code with Copilot
         run: |
           PROMPT="${{ env.PROMPT }}"
-          copilot generate --prompt "$PROMPT" > agent_output.txt
+          copilot generate --language java --prompt "$PROMPT" > agent_output.txt
           cat agent_output.txt
 
-      # 7️⃣ Parse multi-file output and create files
+      # 9️⃣ Parse multi-file AI output and create files
       - name: Parse AI output to files
         run: |
           awk '
@@ -89,21 +94,21 @@ jobs:
             }
           ' agent_output.txt || echo "⚠️ Some AI output could not be parsed; check agent_output.txt"
 
-      # 8️⃣ Commit and push changes to main
+      # 🔟 Commit and push changes to main
       - name: Commit changes
         run: |
           git config user.name "Agent NI3 Bot"
           git config user.email "agent-ni3-bot@github.com"
           git add .
-          git diff-index --quiet HEAD || git commit -m "Agent NI3 Copilot-generated files"
+          git diff-index --quiet HEAD || git commit -m "Agent NI3 Copilot-generated Java files"
           git push origin main || echo "⚠️ Push failed; possibly no changes"
 
-      # 9️⃣ Post preview and result in the issue
+      # 1️⃣1️⃣ Post preview in the issue
       - name: Post result
         run: |
-          AI_PREVIEW=$(cat agent_output.txt | head -n 50)
+          AI_PREVIEW=$(head -n 50 agent_output.txt)
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "✅ Agent NI3 applied Copilot-generated files on the main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
+            -d '{"body": "✅ Agent NI3 applied Copilot-generated Java files on the main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
