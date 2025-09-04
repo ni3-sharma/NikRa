@@ -34,7 +34,7 @@ jobs:
 
       # 5️⃣ Authenticate Copilot CLI
       - name: Authenticate Copilot CLI
-        run: npx copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }}
+        run: npx @githubnext/github-copilot-cli auth login --with-token ${{ secrets.GITHUB_TOKEN }}
 
       # 6️⃣ Parse issue comment for prompt
       - name: Parse Comment
