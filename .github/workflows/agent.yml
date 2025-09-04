@@ -31,9 +31,6 @@ jobs:
       - name: Install Copilot CLI
         run: npm install @githubnext/github-copilot-cli
 
-      # 4️⃣ Verify Copilot CLI using npx
-      - name: Verify Copilot CLI
-        run: npx copilot --version
 
       # 5️⃣ Authenticate Copilot CLI
       - name: Authenticate Copilot CLI
