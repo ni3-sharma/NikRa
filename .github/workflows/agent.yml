@@ -36,7 +36,7 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      # 4. Parse Prompt & Branch
+      # 4. Parse Prompt & Branch (robust)
       - name: Parse Prompt & Branch
         id: parse
         run: |
@@ -51,7 +51,8 @@ jobs:
             PROMPT="${COMMENT#"[agent-ni3]"}"
             echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
-            if [[ "$PROMPT" =~ branch[:=]\ *([a-zA-Z0-9_\-/]+) ]]; then
+            # Robust branch extraction
+            if [[ "$PROMPT" =~ branch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
               BASE_BRANCH="${BASH_REMATCH[1]}"
               echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
             else
@@ -59,7 +60,7 @@ jobs:
                 -H "Authorization: token ${{ steps.auth.outputs.token }}" \
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-                -d '{"body": "⚠️ No branch specified. Please reply with `branch:<branch-name>`."}'
+                -d '{"body": "⚠️ No valid branch specified. Please reply with `branch:<branch-name>`."}'
               echo "NO_BRANCH_SPECIFIED=true" >> $GITHUB_ENV
             fi
           fi
@@ -83,7 +84,7 @@ jobs:
         run: |
           set -e
 
-          # Check if base branch exists
+          # Fault-tolerant base branch check
           if ! git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
             curl -s -X POST \
               -H "Authorization: token ${{ steps.auth.outputs.token }}" \
@@ -202,4 +203,7 @@ jobs:
             curl -s -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-             
+              https://api.github.com/repos/${{ github.repository }}/issues/${{ env.PR_NUMBER }}/comments \
+              -d '{"body":"'"$WARNING_MSG"'"}'
+          else
+            echo "✅ No critical files overwritten or deleted."
