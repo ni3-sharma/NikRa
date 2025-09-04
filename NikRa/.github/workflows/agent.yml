@@ -41,7 +41,9 @@ jobs:
         run: |
           COMMENT="${{ github.event.comment.body }}"
           PROMPT="${COMMENT#"[agent-ni3]"}"
-          echo "PROMPT=$PROMPT" >> $GITHUB_ENV
+          ENCODED=$(echo "$PROMPT" | base64)
+          echo "PROMPT_B64=$ENCODED" >> $GITHUB_ENV
+
 
       # Step 3: Do some work (replace with your AI or script)
       - name: Run Agent Task
