@@ -23,7 +23,9 @@ jobs:
 
       # 2. Fetch all remote branches
       - name: Fetch all branches
-        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+        run: |
+          git fetch --all
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
 
       # 3. Authenticate as GitHub App
       - name: Authenticate as GitHub App
@@ -47,7 +49,7 @@ jobs:
           fi
           echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
 
-          # Detect branch robustly
+          # Robust branch detection
           if [[ "$COMMENT" =~ [Bb]ranch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
               BASE_BRANCH="${BASH_REMATCH[1]}"
               echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
@@ -62,13 +64,23 @@ jobs:
               exit 0
           fi
 
-          # Detect AI prompt only from agent-ni3 comment
+          # Detect AI prompt
           if [[ "$COMMENT" == [agent-ni3]* ]]; then
               PROMPT="${COMMENT#"[agent-ni3]"}"
               echo "PROMPT=$PROMPT" >> $GITHUB_ENV
           fi
 
-      # 5. Post in-progress comment
+      # 5. Verify base branch exists before creating temp branch
+      - name: Verify base branch exists
+        run: |
+          if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+              echo "✅ Base branch exists: $BASE_BRANCH"
+          else
+              echo "⚠️ Base branch '$BASE_BRANCH' does not exist on origin. Please check the name."
+              exit 1
+          fi
+
+      # 6. Post in-progress comment
       - name: Post in-progress comment
         if: env.CREATE_PR == 'no'
         run: |
@@ -78,7 +90,7 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"⏳ Agent NI3 is processing your prompt on branch '"${BASE_BRANCH}"'..."}'
 
-      # 6. Apply AI-assisted changes
+      # 7. Create temp branch and AI-assisted changes
       - name: Apply AI-assisted changes
         if: env.CREATE_PR == 'no'
         env:
@@ -123,7 +135,7 @@ jobs:
           echo "TEMP_BRANCH=$TEMP_BRANCH" >> $GITHUB_ENV
           echo "AI_OUTPUT=$AI_OUTPUT" >> $GITHUB_ENV
 
-      # 7. Post AI result comment
+      # 8. Post AI result comment
       - name: Post AI result
         if: env.CREATE_PR == 'no'
         run: |
