@@ -1,168 +1,28 @@
-name: Agent NI3 AI Bot
+- name: Parse Comment (robust)
+  id: parse
+  run: |
+    COMMENT="${{ github.event.comment.body }}"
+    ISSUE_NUMBER="${{ github.event.issue.number }}"
 
-on:
-  issue_comment:
-    types: [created]
+    CREATE_PR="no"
+    if [[ "$COMMENT" =~ [Cc]reate[[:space:]]PR ]]; then
+        CREATE_PR="yes"
+    fi
+    echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
 
-permissions:
-  issues: write
-  pull-requests: write
-  contents: write
+    # Robustly extract [agent-ni3] content
+    if [[ "$COMMENT" =~ \[agent-ni3\](.*) ]]; then
+        PROMPT="${BASH_REMATCH[1]}"
+        PROMPT=$(echo "$PROMPT" | sed 's/^[[:space:]\n]*//;s/[[:space:]\n]*$//')  # trim spaces & newlines
+    else
+        PROMPT=""
+    fi
+    echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
-jobs:
-  agent-job:
-    if: startsWith(github.event.comment.body, '[agent-ni3]') || contains(github.event.comment.body, 'branch:') || contains(github.event.comment.body, 'create PR')
-    runs-on: ubuntu-latest
-
-    steps:
-      # 1. Checkout repo
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # 2. Fetch all branches
-      - name: Fetch all branches
-        run: |
-          git fetch --all
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
-
-      # 3. Authenticate GitHub App
-      - name: Authenticate as GitHub App
-        id: auth
-        uses: tibdex/github-app-token@v2
-        with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.PRIVATE_KEY }}
-          installation_id: ${{ secrets.INSTALLATION_ID }}
-
-      # 4. Parse comment
-      - name: Parse Comment
-        id: parse
-        run: |
-          COMMENT="${{ github.event.comment.body }}"
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-
-          # Detect if PR should be created
-          CREATE_PR="no"
-          if [[ "$COMMENT" =~ [Cc]reate[[:space:]]PR ]]; then
-              CREATE_PR="yes"
-          fi
-          echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
-
-          # Detect branch
-          if [[ "$COMMENT" =~ [Bb]ranch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
-              BASE_BRANCH="${BASH_REMATCH[1]}"
-          else
-              BASE_BRANCH=""
-          fi
-          echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
-
-          # Detect AI prompt
-          if [[ "$COMMENT" == [agent-ni3]* ]]; then
-              PROMPT="${COMMENT#"[agent-ni3]"}"
-              PROMPT=$(echo "$PROMPT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  # trim
-              echo "PROMPT=$PROMPT" >> $GITHUB_ENV
-          fi
-
-      # 5. Self-healing branch logic
-      - name: Self-healing branch setup
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          DEFAULT_BRANCH="develop"
-          if [ -z "$BASE_BRANCH" ]; then
-              echo "⚠️ No branch specified. Using default branch: $DEFAULT_BRANCH"
-              BASE_BRANCH=$DEFAULT_BRANCH
-          fi
-
-          # Ensure default branch exists
-          git fetch origin $DEFAULT_BRANCH:$DEFAULT_BRANCH || { echo "❌ Default branch $DEFAULT_BRANCH does not exist"; exit 1; }
-
-          # Check if base branch exists remotely
-          if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
-              echo "✅ Base branch exists: $BASE_BRANCH"
-              git checkout $BASE_BRANCH
-          else
-              echo "⚠️ Base branch '$BASE_BRANCH' does not exist. Creating it from $DEFAULT_BRANCH..."
-              git checkout -b $BASE_BRANCH $DEFAULT_BRANCH
-              git push https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }} $BASE_BRANCH
-          fi
-
-      # 6. Validate PROMPT
-      - name: Validate Prompt
-        run: |
-          if [ -z "$PROMPT" ]; then
-              curl -s -X POST \
-                -H "Authorization: token ${{ steps.auth.outputs.token }}" \
-                -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-                -d '{"body":"❌ No valid prompt detected. Please start your comment with `[agent-ni3]` and provide instructions."}'
-              exit 1
-          fi
-
-      # 7. Post in-progress comment
-      - name: Post in-progress comment
-        if: env.CREATE_PR == 'no'
-        run: |
-          curl -s -X POST \
-            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body":"⏳ Agent NI3 is processing your prompt on branch '"${BASE_BRANCH}"'..."}'
-
-      # 8. Apply AI-assisted changes
-      - name: Apply AI-assisted changes
-        if: env.CREATE_PR == 'no'
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          TEMP_BRANCH="agent-ni3-fix-$(date +%s)"
-          git checkout -b $TEMP_BRANCH $BASE_BRANCH
-
-          git config user.name "Agent NI3 Bot"
-          git config user.email "agent-ni3-bot@github.com"
-
-          # AI Code Generation with safe parsing
-          AI_OUTPUT=$(curl -s https://api.openai.com/v1/completions \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -d '{
-              "model": "text-davinci-003",
-              "prompt": "'"$PROMPT"'",
-              "max_tokens": 2000,
-              "temperature": 0
-            }' | jq -r '.choices[0].text // "⚠️ AI returned empty output"')
-
-          echo "$AI_OUTPUT" > agent_ai_output.txt
-
-          # Parse AI output and create files dynamically
-          awk '
-            /^file:/ { file=$2; next }
-            /^content: \|/ { content=""; in_content=1; next }
-            { if(in_content) { content=content $0 "\n" } }
-            /^$/ { if(file != "") { 
-                      system("mkdir -p \"$(dirname \""file"\")\" && echo \"" content "\" > \""file"\"") 
-                      file=""; in_content=0 
-                    } 
-            }
-          ' agent_ai_output.txt || echo "⚠️ Warning: Some AI output could not be parsed; check agent_ai_output.txt"
-
-          git add .
-          git commit -m "Agent NI3 AI-generated files" || echo "No changes to commit"
-          git push https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }} $TEMP_BRANCH || echo "⚠️ Push failed"
-
-          echo "TEMP_BRANCH=$TEMP_BRANCH" >> $GITHUB_ENV
-          echo "AI_OUTPUT=$AI_OUTPUT" >> $GITHUB_ENV
-
-      # 9. Post AI result comment
-      - name: Post AI result
-        if: env.CREATE_PR == 'no'
-        run: |
-          curl -s -X POST \
-            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "✅ Agent NI3 applied AI-generated files on branch '"${TEMP_BRANCH}"'.\n\nPreview:\n'"${{ env.AI_OUTPUT }}"'\n\nReply `create PR` to open a Pull Request."}'
+    # Detect branch anywhere in the comment (branch:xxx)
+    if [[ "$COMMENT" =~ [Bb]ranch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
+        BASE_BRANCH="${BASH_REMATCH[1]}"
+    else
+        BASE_BRANCH=""
+    fi
+    echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
