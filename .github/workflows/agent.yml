@@ -19,9 +19,15 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # important: fetch all history and branches
+          fetch-depth: 0  # fetch full history
 
-      # 2. Authenticate as GitHub App
+      # 2. Fetch all remote branches (branch-fetch fix)
+      - name: Fetch all branches
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+          git branch -r
+
+      # 3. Authenticate as GitHub App
       - name: Authenticate as GitHub App
         id: auth
         uses: tibdex/github-app-token@v2
@@ -30,7 +36,7 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      # 3. Parse Prompt & Branch
+      # 4. Parse Prompt & Branch
       - name: Parse Prompt & Branch
         id: parse
         run: |
@@ -58,13 +64,6 @@ jobs:
             fi
           fi
 
-      # 4. Fetch all branches
-      - name: Fetch all branches
-        if: env.NO_BRANCH_SPECIFIED != 'true'
-        run: |
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
-          git branch -r
-
       # 5. Post "in progress" comment
       - name: Post In-Progress Comment
         if: env.CREATE_PR == 'no' && env.NO_BRANCH_SPECIFIED != 'true'
@@ -84,7 +83,7 @@ jobs:
         run: |
           set -e
 
-          # Fault-tolerant base branch check
+          # Check if base branch exists
           if ! git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
             curl -s -X POST \
               -H "Authorization: token ${{ steps.auth.outputs.token }}" \
@@ -113,7 +112,7 @@ jobs:
 
           echo "$AI_OUTPUT" > agent_ai_output.txt
 
-          # Parse AI output and create files dynamically (fault-tolerant)
+          # Parse AI output and create files dynamically
           awk '
             /^file:/ { file=$2; next }
             /^content: \|/ { content=""; in_content=1; next }
@@ -156,7 +155,7 @@ jobs:
             -H "Authorization: token ${{ steps.auth.outputs.token }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/pulls \
-            -d '{"title":"'"$PR_TITLE"'","head":"'"$TEMP_BRANCH"'","base":"main","body":"'"$PR_BODY"'"}' | jq -r '.number')
+            -d '{"title":"'"$PR_TITLE"'","head":"'"$TEMP_BRANCH"'","base":"'"${BASE_BRANCH}"'","body":"'"$PR_BODY"'"}' | jq -r '.number')
 
           # Assign reviewers
           curl -s -X POST \
@@ -203,7 +202,4 @@ jobs:
             curl -s -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${{ github.repository }}/issues/${{ env.PR_NUMBER }}/comments \
-              -d '{"body":"'"$WARNING_MSG"'"}'
-          else
-            echo "✅ No critical files overwritten or deleted."
+             
