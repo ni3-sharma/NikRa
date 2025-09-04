@@ -1,4 +1,4 @@
-name: Agent NI3 Java GPT Bot
+name: Agent NI3 Copilot
 
 on:
   issue_comment:
@@ -13,28 +13,23 @@ jobs:
     if: startsWith(github.event.comment.body, '[agent-ni3]')
     runs-on: ubuntu-latest
 
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
     steps:
-      # 1️⃣ Checkout main branch
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
 
-      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: "20"
 
-      # 3️⃣ Install dependencies
-      - name: Install OpenAI SDK
-        run: npm install openai fs-extra path
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot-cli
 
-      # 4️⃣ Parse issue comment
+      - name: Authenticate Copilot CLI
+        run: copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }}
+
       - name: Parse issue comment
         id: parse
         run: |
@@ -53,82 +48,38 @@ jobs:
                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments \
-                -d '{"body":"❌ No valid prompt detected. Please start your comment with `[agent-ni3]` followed by instructions."}'
+                -d '{"body":"❌ No valid prompt detected. Please start your comment with `[agent-ni3]` and instructions."}'
               exit 1
           fi
 
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
-      # 5️⃣ Post in-progress comment
       - name: Post in-progress comment
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body":"⏳ Agent NI3 is generating Java code using OpenAI GPT..."}'
+            -d '{"body":"⏳ Agent NI3 is generating Java code using GitHub Copilot..."}'
 
-      # 6️⃣ Generate Java code using OpenAI GPT
-      - name: Generate Java code
+      - name: Generate Java code with Copilot
         run: |
-          node -e "
-          import fs from 'fs-extra';
-          import path from 'path';
-          import OpenAI from 'openai';
+          mkdir -p agent_output
+          copilot generate --language java --prompt "$PROMPT" --output agent_output/
 
-          const prompt = process.env.PROMPT;
-          const repoPath = process.cwd();
-
-          const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-          async function run() {
-            const completion = await client.chat.completions.create({
-              model: 'gpt-3.5-turbo',
-              messages: [{ role: 'user', content: 'Generate Java files with full path info for a project. Prompt: ' + prompt }],
-              temperature: 0.2
-            });
-
-            const output = completion.choices[0].message.content;
-            fs.writeFileSync('agent_output.txt', output);
-
-            // Parse multi-file output: expects format like
-            // file: src/main/java/com/example/User.java
-            // content: |
-            // public class User {...}
-            const files = output.split(/file: /).filter(Boolean);
-
-            for (const f of files) {
-              const lines = f.split('\n');
-              const filePath = lines[0].trim();
-              const contentIndex = lines.findIndex(l => l.startsWith('content: |'));
-              if (contentIndex === -1) continue;
-              const content = lines.slice(contentIndex + 1).join('\n');
-              fs.ensureDirSync(path.dirname(filePath));
-              fs.writeFileSync(filePath, content);
-            }
-          }
-
-          run().catch(e => { 
-            console.error('❌ GPT generation failed:', e); 
-            process.exit(1); 
-          });
-          "
-
-      # 7️⃣ Commit changes to main
-      - name: Commit changes
+      - name: Commit generated code
         run: |
           git config user.name "Agent NI3 Bot"
           git config user.email "agent-ni3-bot@github.com"
-          git add .
-          git diff-index --quiet HEAD || git commit -m "Agent NI3 GPT-generated Java files"
-          git push origin main || echo "⚠️ Push failed; possibly no changes"
+          git add agent_output/
+          git diff-index --quiet HEAD || git commit -m "Agent NI3 Copilot-generated Java files"
+          git push origin main || echo "⚠️ Push failed; maybe no changes"
 
-      # 8️⃣ Post preview in issue
-      - name: Post result
+      - name: Post preview
         run: |
-          AI_PREVIEW=$(head -n 50 agent_output.txt)
+          AI_PREVIEW=$(head -n 50 agent_output/* || echo "No output generated")
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "✅ Agent NI3 applied GPT-generated Java files on the main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
+            -d '{"body": "✅ Agent NI3 applied Copilot-generated Java files on main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
