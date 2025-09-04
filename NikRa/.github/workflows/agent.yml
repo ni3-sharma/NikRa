@@ -4,6 +4,11 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+
 jobs:
   agent-job:
     if: startsWith(github.event.comment.body, '[agent-ni3]')
@@ -21,17 +26,47 @@ jobs:
           private_key: ${{ secrets.PRIVATE_KEY }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
 
-      - name: Extract Prompt
-        id: extract
-        run: |
-          PROMPT="${{ github.event.comment.body }}"
-          PROMPT="${PROMPT#'[agent-ni3]'}"
-          echo "PROMPT=$PROMPT" >> $GITHUB_ENV
-
-      - name: Reply to Comment
+      # Step 1: Acknowledge start
+      - name: Post "in progress" comment
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ steps.auth.outputs.token }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "⚡ Agent NI3 received your request: '${{ env.PROMPT }}'"}'
+            -d '{"body": "⏳ Agent NI3 is processing your request..."}'
+
+      # Step 2: Extract the prompt text
+      - name: Extract Prompt
+        id: extract
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          PROMPT="${COMMENT#"[agent-ni3]"}"
+          echo "PROMPT=$PROMPT" >> $GITHUB_ENV
+
+      # Step 3: Do some work (replace with your AI or script)
+      - name: Run Agent Task
+        id: run_task
+        run: |
+          # Example placeholder "task"
+          echo "Result: processed '${PROMPT}'" > result.txt
+
+      # Step 4: Post result if successful
+      - name: Post success comment
+        if: success()
+        run: |
+          RESULT=$(cat result.txt)
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body": "✅ Agent NI3 completed: '"${RESULT}"'"}'
+
+      # Step 5: Post error if failed
+      - name: Post error comment
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ steps.auth.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d '{"body": "❌ Agent NI3 encountered an error while processing your request."}'
