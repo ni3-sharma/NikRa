@@ -49,20 +49,13 @@ jobs:
           fi
           echo "CREATE_PR=$CREATE_PR" >> $GITHUB_ENV
 
-          # Robust branch detection
+          # Branch detection (case-insensitive, supports branch: or branch=)
           if [[ "$COMMENT" =~ [Bb]ranch[:=][[:space:]]*([a-zA-Z0-9_\-\/]+) ]]; then
               BASE_BRANCH="${BASH_REMATCH[1]}"
-              echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
-              echo "✅ Found branch: $BASE_BRANCH"
           else
-              echo "⚠️ No branch detected in comment"
-              curl -s -X POST \
-                -H "Authorization: token ${{ steps.auth.outputs.token }}" \
-                -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-                -d '{"body":"⚠️ No branch specified. Please reply to this issue with `branch:<branch-name>` to continue."}'
-              exit 0
+              BASE_BRANCH=""
           fi
+          echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
 
           # Detect AI prompt
           if [[ "$COMMENT" == [agent-ni3]* ]]; then
@@ -70,15 +63,30 @@ jobs:
               echo "PROMPT=$PROMPT" >> $GITHUB_ENV
           fi
 
-      # 5. Verify base branch exists before creating temp branch
-      - name: Verify base branch exists
+      # 5. Self-healing branch logic
+      - name: Self-healing branch setup
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          DEFAULT_BRANCH="develop"
+          if [ -z "$BASE_BRANCH" ]; then
+              echo "⚠️ No branch specified. Using default branch: $DEFAULT_BRANCH"
+              BASE_BRANCH=$DEFAULT_BRANCH
+          fi
+
+          # Ensure default branch exists
+          git fetch origin $DEFAULT_BRANCH:$DEFAULT_BRANCH || { echo "❌ Default branch $DEFAULT_BRANCH does not exist"; exit 1; }
+
+          # Check if base branch exists remotely
           if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
               echo "✅ Base branch exists: $BASE_BRANCH"
           else
-              echo "⚠️ Base branch '$BASE_BRANCH' does not exist on origin. Please check the name."
-              exit 1
+              echo "⚠️ Base branch '$BASE_BRANCH' does not exist. Creating it from $DEFAULT_BRANCH..."
+              git checkout -b $BASE_BRANCH $DEFAULT_BRANCH
+              git push https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }} $BASE_BRANCH
           fi
+
+          git checkout $BASE_BRANCH
 
       # 6. Post in-progress comment
       - name: Post in-progress comment
@@ -99,7 +107,7 @@ jobs:
         run: |
           set -e
           TEMP_BRANCH="agent-ni3-fix-$(date +%s)"
-          git checkout -b $TEMP_BRANCH origin/$BASE_BRANCH
+          git checkout -b $TEMP_BRANCH $BASE_BRANCH
 
           git config user.name "Agent NI3 Bot"
           git config user.email "agent-ni3-bot@github.com"
