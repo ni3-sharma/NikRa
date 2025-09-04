@@ -1,4 +1,4 @@
-name: Agent NI3 Java Copilot Bot
+name: Agent NI3 Java GPT Bot
 
 on:
   issue_comment:
@@ -14,29 +14,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout main branch
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      # 2️⃣ Setup Node.js (needed for Copilot CLI)
+      # 2️⃣ Setup Node.js (needed for OpenAI SDK)
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: "20"
 
-      # 3️⃣ Install Copilot CLI locally
-      - name: Install Copilot CLI
-        run: npm install @githubnext/github-copilot-cli
+      # 3️⃣ Install dependencies
+      - name: Install OpenAI SDK
+        run: npm install openai fs-extra
 
-
-      # 5️⃣ Authenticate Copilot CLI
-      - name: Authenticate Copilot CLI
-        run: ./node_modules/.bin/copilot auth login --with-token ${{ secrets.GITHUB_TOKEN }
-
-      # 6️⃣ Parse issue comment for prompt
+      # 4️⃣ Parse issue comment
       - name: Parse Comment
         id: parse
         run: |
@@ -61,46 +56,71 @@ jobs:
 
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
-      # 7️⃣ Post in-progress comment
+      # 5️⃣ Post in-progress comment
       - name: Post in-progress comment
         run: |
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body":"⏳ Agent NI3 is processing your Java prompt on the main branch..."}'
+            -d '{"body":"⏳ Agent NI3 is generating Java code using OpenAI GPT..."}'
 
-      # 8️⃣ Generate Java code using Copilot CLI via npx
-      - name: Generate Java code with Copilot
+      # 6️⃣ Generate Java code using OpenAI GPT
+      - name: Generate Java code
         run: |
-          PROMPT="${{ env.PROMPT }}"
-          npx copilot generate --language java --prompt "$PROMPT" > agent_output.txt
-          cat agent_output.txt
+          node -e "
+          import fs from 'fs-extra';
+          import OpenAI from 'openai';
 
-      # 9️⃣ Parse multi-file AI output and create files
-      - name: Parse AI output to files
-        run: |
-          awk '
-            /^file:/ { file=$2; next }
-            /^content: \|/ { content=""; in_content=1; next }
-            { if(in_content) { content=content $0 "\n" } }
-            /^$/ { if(file != "") { 
-                      system("mkdir -p \"$(dirname \""file"\")\" && echo \"" content "\" > \""file"\"") 
-                      file=""; in_content=0 
-                    } 
+          const prompt = process.env.PROMPT;
+          const repoPath = process.cwd();
+
+          const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+          async function run() {
+            const completion = await client.chat.completions.create({
+              model: 'gpt-4',
+              messages: [{ role: 'user', content: 'Generate Java files with path info for a project. Prompt: ' + prompt }],
+              temperature: 0.2
+            });
+
+            const output = completion.choices[0].message.content;
+
+            fs.writeFileSync('agent_output.txt', output);
+
+            // Parse multi-file output: expects format like
+            // file: src/main/java/com/example/User.java
+            // content: |
+            // public class User {...}
+            const files = output.split(/file: /).filter(Boolean);
+
+            for (const f of files) {
+              const lines = f.split('\n');
+              const filePath = lines[0].trim();
+              const contentIndex = lines.findIndex(l => l.startsWith('content: |'));
+              if (contentIndex === -1) continue;
+              const content = lines.slice(contentIndex + 1).join('\n');
+              fs.ensureDirSync(require('path').dirname(filePath));
+              fs.writeFileSync(filePath, content);
             }
-          ' agent_output.txt || echo "⚠️ Some AI output could not be parsed; check agent_output.txt"
+          }
 
-      # 🔟 Commit and push changes to main
+          run().catch(e => {
+            console.error('❌ GPT generation failed:', e);
+            process.exit(1);
+          });
+          "
+
+      # 7️⃣ Commit changes to main
       - name: Commit changes
         run: |
           git config user.name "Agent NI3 Bot"
           git config user.email "agent-ni3-bot@github.com"
           git add .
-          git diff-index --quiet HEAD || git commit -m "Agent NI3 Copilot-generated Java files"
+          git diff-index --quiet HEAD || git commit -m "Agent NI3 GPT-generated Java files"
           git push origin main || echo "⚠️ Push failed; possibly no changes"
 
-      # 1️⃣1️⃣ Post preview in the issue
+      # 8️⃣ Post preview in issue
       - name: Post result
         run: |
           AI_PREVIEW=$(head -n 50 agent_output.txt)
@@ -108,4 +128,4 @@ jobs:
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d '{"body": "✅ Agent NI3 applied Copilot-generated Java files on the main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
+            -d '{"body": "✅ Agent NI3 applied GPT-generated Java files on the main branch.\n\nPreview (first 50 lines):\n'"$AI_PREVIEW"'"}'
