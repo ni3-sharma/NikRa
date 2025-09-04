@@ -15,9 +15,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repo
+      # 1. Checkout repo (fetch full history)
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # important: fetch all history and branches
 
       # 2. Authenticate as GitHub App
       - name: Authenticate as GitHub App
@@ -56,7 +58,14 @@ jobs:
             fi
           fi
 
-      # 4. Post "in progress" comment
+      # 4. Fetch all branches
+      - name: Fetch all branches
+        if: env.NO_BRANCH_SPECIFIED != 'true'
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+          git branch -r
+
+      # 5. Post "in progress" comment
       - name: Post In-Progress Comment
         if: env.CREATE_PR == 'no' && env.NO_BRANCH_SPECIFIED != 'true'
         run: |
@@ -66,7 +75,7 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body": "⏳ Agent NI3 is processing your prompt on branch '"${BASE_BRANCH}"'..."}'
 
-      # 5. Apply AI-assisted changes
+      # 6. Apply AI-assisted changes
       - name: Apply AI-assisted changes
         if: env.CREATE_PR == 'no' && env.NO_BRANCH_SPECIFIED != 'true'
         env:
@@ -75,15 +84,13 @@ jobs:
         run: |
           set -e
 
-          git fetch origin --prune
-
           # Fault-tolerant base branch check
           if ! git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
             curl -s -X POST \
               -H "Authorization: token ${{ steps.auth.outputs.token }}" \
               -H "Accept: application/vnd.github+json" \
               https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-              -d '{"body": "⚠️ Base branch '"$BASE_BRANCH"' does not exist. Please create it or provide a valid branch."}'
+              -d '{"body": "⚠️ Base branch '"$BASE_BRANCH"' does not exist. Please provide a valid branch."}'
             exit 0
           fi
 
@@ -106,7 +113,7 @@ jobs:
 
           echo "$AI_OUTPUT" > agent_ai_output.txt
 
-          # Fault-tolerant parse and create files
+          # Parse AI output and create files dynamically (fault-tolerant)
           awk '
             /^file:/ { file=$2; next }
             /^content: \|/ { content=""; in_content=1; next }
@@ -127,7 +134,7 @@ jobs:
           echo "CHANGES_MADE=Yes" >> $GITHUB_ENV
           echo "AI_OUTPUT=$AI_OUTPUT" >> $GITHUB_ENV
 
-      # 6. Post AI result comment
+      # 7. Post AI result comment
       - name: Post AI result comment
         if: env.CREATE_PR == 'no' && env.CHANGES_MADE == 'Yes'
         run: |
@@ -137,7 +144,7 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body": "✅ Agent NI3 applied AI-generated files on branch '"${TEMP_BRANCH}"'.\n\nPreview:\n'"${{ env.AI_OUTPUT }}"'\n\nReply `create PR` to open a Pull Request."}'
 
-      # 7. Create PR
+      # 8. Create PR
       - name: Create PR
         if: env.CREATE_PR == 'yes'
         run: |
@@ -167,7 +174,7 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
             -d '{"body":"✅ PR #'"$PR_NUMBER"' created with AI-generated files from branch '"$TEMP_BRANCH"'."}'
 
-      # 8. PR safeguard for critical files
+      # 9. PR safeguard for critical files
       - name: Check critical files in PR
         if: env.CREATE_PR == 'yes'
         env:
