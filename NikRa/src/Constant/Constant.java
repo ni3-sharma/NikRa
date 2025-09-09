@@ -7,4 +7,9 @@ public interface Constant {
     String POST="POST";
     String GET="GET";
     String PUT="PUT";
+    
+    String DROPDOWN="DROPDOWN";
+    
+    void dropdown();
 }
+```
