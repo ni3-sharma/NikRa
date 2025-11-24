@@ -28,7 +28,6 @@ public abstract class ServiceCalling {
             case Constant.PUT:
                 request = new Request.Builder()
                         .url(Constant.BASEURL)
-                        .put(null)
                         .build();
                 break;
             default:
@@ -53,9 +52,7 @@ public abstract class ServiceCalling {
                     }
                 } finally {
                     // Always close the response to prevent resource leaks
-                    if (response != null) {
-                        response.close();
-                    }
+                    response.close();
                 }
             }
 
