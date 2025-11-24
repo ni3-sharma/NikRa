@@ -11,37 +11,52 @@ import okhttp3.Response;
 
 //Create abstract class to call api
 public abstract class ServiceCalling {
-    OkHttpClient client = new OkHttpClient();
+    // Use singleton pattern for OkHttpClient to reuse connection pool and improve performance
+    private static final OkHttpClient client = new OkHttpClient();
 
     // Callin api frm this method with type
     public void callRequestApi(String apiType) {
         Request request;
-        if (apiType.equals(Constant.GET)) {
-            request = new Request.Builder()
-                    .url(Constant.BASEURL)
-                    .get()
-                    .build();
-        } else if (apiType.equals(Constant.PUT)) {
-            request = new Request.Builder()
-                    .url(Constant.BASEURL)
-                    .build();
-        } else {
-            request = new Request.Builder()
-                    .url(Constant.BASEURL)
-                    .build();
+        // Use switch statement for better performance than if-else chain
+        switch (apiType) {
+            case Constant.GET:
+                request = new Request.Builder()
+                        .url(Constant.BASEURL)
+                        .get()
+                        .build();
+                break;
+            case Constant.PUT:
+                request = new Request.Builder()
+                        .url(Constant.BASEURL)
+                        .put(null)
+                        .build();
+                break;
+            default:
+                request = new Request.Builder()
+                        .url(Constant.BASEURL)
+                        .build();
+                break;
         }
         Call call = client.newCall(request);
         call.enqueue(new Callback() {
             @Override
             public void onResponse(Call call, Response response)
                     throws IOException {
-                new Thread(new Runnable() {
-                    public void run() {
-                        // success response and pass it to abstract function
-                        successResponse(request.body().toString());
+                // No need to create a new thread - we're already in an async callback
+                // Read response body and ensure it's closed to prevent resource leaks
+                try {
+                    if (response.body() != null) {
+                        String responseBody = response.body().string();
+                        successResponse(responseBody);
+                    } else {
+                        successResponse("");
                     }
-                }).start();
-                ;
+                } finally {
+                    // Always close the response to prevent resource leaks
+                    if (response != null) {
+                        response.close();
+                    }
+                }
             }
 
             @Override
